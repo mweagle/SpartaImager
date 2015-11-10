@@ -5,18 +5,20 @@ package main
 //
 
 import (
+	"Sparta/aws/s3"
 	"SpartaImager/transforms"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	sparta "github.com/mweagle/Sparta"
-	"net/http"
-	"os"
-	"strings"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -28,33 +30,8 @@ func paramVal(keyName string, defaultValue string) string {
 	return value
 }
 
-var S3_EVENT_BROADCASTER_BUCKET = paramVal("S3_TEST_BUCKET", "arn:aws:s3:::PublicS3Bucket")
-var S3_SOURCE_BUCKET = paramVal("S3_BUCKET", "arn:aws:s3:::MyS3Bucket")
-
-type bucketInfo struct {
-	Name string `json:"name"`
-}
-
-type objectInfo struct {
-	Key string `json:"key"`
-}
-
-type s3EventInfo struct {
-	Bucket bucketInfo `json:"bucket"`
-	Object objectInfo `json:"object"`
-}
-
-type eventRecord struct {
-	Region    string `json:"awsRegion"`
-	EventName string `json:"eventName"`
-	EventTime string `json:"eventTime"`
-
-	S3 s3EventInfo `json:"s3"`
-}
-
-type s3Event struct {
-	Records []eventRecord
-}
+var s3EventBroadcasterBucket = paramVal("S3_TEST_BUCKET", "arn:aws:s3:::PublicS3Bucket")
+var s3SourceBucket = paramVal("S3_BUCKET", "arn:aws:s3:::MyS3Bucket")
 
 // Returns an AWS Session (https://github.com/aws/aws-sdk-go/wiki/Getting-Started-Configuration)
 // object that attaches a debug level handler to all AWS requests from services
@@ -114,10 +91,11 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 
 func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w *http.ResponseWriter, logger *logrus.Logger) {
 	logger.WithFields(logrus.Fields{
-		"RequestID": context.AWSRequestId,
+		"RequestID": context.AWSRequestID,
+		"Event":     string(*event),
 	}).Info("Request received")
 
-	var lambdaEvent s3Event
+	var lambdaEvent spartaS3.Event
 	err := json.Unmarshal([]byte(*event), &lambdaEvent)
 	if err != nil {
 		logger.Error("Failed to unmarshal event data: ", err.Error())
@@ -175,7 +153,7 @@ func imagerFunctions() []*sparta.LambdaAWSInfo {
 	var iamRole = sparta.IAMRoleDefinition{}
 
 	// Setup the ARN that includes all child keys
-	resourceArn := fmt.Sprintf("%s/*", S3_EVENT_BROADCASTER_BUCKET)
+	resourceArn := fmt.Sprintf("%s/*", s3EventBroadcasterBucket)
 	iamRole.Privileges = append(iamRole.Privileges, sparta.IAMRolePrivilege{
 		Actions: []string{"s3:GetObject",
 			"s3:PutObject",
@@ -198,7 +176,7 @@ func imagerFunctions() []*sparta.LambdaAWSInfo {
 	//
 	lambdaFn.Permissions = append(lambdaFn.Permissions, sparta.S3Permission{
 		BasePermission: sparta.BasePermission{
-			SourceArn: S3_EVENT_BROADCASTER_BUCKET,
+			SourceArn: s3EventBroadcasterBucket,
 		},
 		Events: []string{"s3:ObjectCreated:*", "s3:ObjectRemoved:*"},
 	})
