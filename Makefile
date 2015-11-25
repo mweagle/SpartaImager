@@ -1,5 +1,5 @@
 .DEFAULT_GOAL=provision
-.PHONY: build test get run
+.PHONY: build test get run tags
 
 ensure_vendor:
 	mkdir -pv vendor
@@ -7,7 +7,7 @@ ensure_vendor:
 clean:
 	rm -rf ./vendor
 	go clean .
-	
+
 format:
 	go fmt .
 	gofmt -s -w ./transforms/
@@ -27,16 +27,22 @@ get: clean ensure_vendor
 	rm -rf ./src/main/vendor/github.com/Sirupsen/logrus/.git
 	git clone --depth=1 https://github.com/voxelbrain/goptions ./vendor/github.com/voxelbrain/goptions
 	rm -rf ./src/main/vendor/github.com/voxelbrain/goptions/.git
-	git clone --depth=1 https://github.com/mjibson/esc ./vendor/github.com/mjibson/esc
-	rm -rf ./src/main/vendor/github.com/mjibson/esc/.git
+	git clone --depth=1 https://github.com/mweagle/esc ./vendor/github.com/mweagle/esc
+	rm -rf ./src/main/vendor/github.com/mweagle/esc/.git
 	git clone --depth=1 https://github.com/mweagle/Sparta ./vendor/github.com/mweagle/Sparta
 	rm -rf ./src/main/vendor/github.com/mweagle/Sparta/.git
 
-build: get format vet generate 
+build: get format vet generate
 	GO15VENDOREXPERIMENT=1 go build .
-	
+
 test: build
 	GO15VENDOREXPERIMENT=1 go test ./test/...
-	
-provision: build
+
+tags:
+	gotags -tag-relative=true -R=true -sort=true -f="tags" -fields=+l .
+
+provision:
 	go run application.go --level debug provision --s3Bucket $(S3_BUCKET)
+
+describe:
+	go run application.go --level info describe --out ./graph.html
