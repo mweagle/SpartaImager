@@ -5,7 +5,7 @@ package main
 //
 
 import (
-	"Sparta/aws/s3"
+	spartaS3 "Sparta/aws/s3"
 	"SpartaImager/transforms"
 	"encoding/json"
 	"fmt"
@@ -93,7 +93,7 @@ func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w *ht
 	logger.WithFields(logrus.Fields{
 		"RequestID": context.AWSRequestID,
 		"Event":     string(*event),
-	}).Info("Request received")
+	}).Info("Request received :)")
 
 	var lambdaEvent spartaS3.Event
 	err := json.Unmarshal([]byte(*event), &lambdaEvent)
@@ -144,11 +144,51 @@ func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w *ht
 	}
 }
 
+func s3ItemInfo(event *json.RawMessage, context *sparta.LambdaContext, w *http.ResponseWriter, logger *logrus.Logger) {
+	logger.WithFields(logrus.Fields{
+		"RequestID": context.AWSRequestID,
+		"Event":     string(*event),
+	}).Info("Request received")
+
+	var lambdaEvent sparta.APIGatewayLambdaJSONEvent
+	err := json.Unmarshal([]byte(*event), &lambdaEvent)
+	if err != nil {
+		logger.Error("Failed to unmarshal event data: ", err.Error())
+		http.Error(*w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	awsSession := awsSession(logger)
+	svc := s3.New(awsSession)
+	result, err := svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(lambdaEvent.QueryParams["bucketName"]),
+		Key:    aws.String(lambdaEvent.QueryParams["keyName"]),
+	})
+	if nil != err {
+		logger.Error("Failed to process event: ", err.Error())
+		http.Error(*w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	httpResponse := map[string]interface{}{
+		"S3": result,
+	}
+	responseBody, err := json.Marshal(httpResponse)
+	if err != nil {
+		http.Error(*w, err.Error(), http.StatusInternalServerError)
+	} else {
+		fmt.Fprint(*w, string(responseBody))
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Return the *[]sparta.LambdaAWSInfo slice
 //
-func imagerFunctions() []*sparta.LambdaAWSInfo {
+func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 
+	//////////////////////////////////////////////////////////////////////////////
+	// 1 - Lambda function that listens to S3 events and stamps images
+	//////////////////////////////////////////////////////////////////////////////
 	// Provision an IAM::Role as part of this application
 	var iamRole = sparta.IAMRoleDefinition{}
 
@@ -181,9 +221,41 @@ func imagerFunctions() []*sparta.LambdaAWSInfo {
 		Events: []string{"s3:ObjectCreated:*", "s3:ObjectRemoved:*"},
 	})
 	lambdaFunctions = append(lambdaFunctions, lambdaFn)
-	return lambdaFunctions
+
+	//////////////////////////////////////////////////////////////////////////////
+	// 2 - Lambda function that allows for querying of S3 information
+	//////////////////////////////////////////////////////////////////////////////
+	s3ItemInfoOptions := &sparta.LambdaFunctionOptions{
+		Description: "Get information about an item in S3 via querystring params",
+		MemorySize:  128,
+		Timeout:     10,
+	}
+	var iamDynamicRole = sparta.IAMRoleDefinition{}
+	iamDynamicRole.Privileges = append(iamDynamicRole.Privileges, sparta.IAMRolePrivilege{
+		Actions:  []string{"s3:GetObject"},
+		Resource: resourceArn,
+	})
+	s3ItemInfoLambdaFn := sparta.NewLambda(iamDynamicRole, s3ItemInfo, s3ItemInfoOptions)
+
+	// Register the function with the API Gateway
+	apiGatewayResource, _ := api.NewResource("/info", s3ItemInfoLambdaFn)
+	method, err := apiGatewayResource.NewMethod("GET")
+	if err != nil {
+		return nil, err
+	}
+	// Whitelist query string params
+	method.Parameters["method.request.querystring.keyName"] = true
+	method.Parameters["method.request.querystring.bucketName"] = true
+	lambdaFunctions = append(lambdaFunctions, s3ItemInfoLambdaFn)
+
+	return lambdaFunctions, nil
 }
 
 func main() {
-	sparta.Main("SpartaImager", "This is a sample Sparta application", imagerFunctions())
+	apiStage := sparta.NewStage("v1")
+	apiGateway := sparta.NewAPIGateway("SpartaImagerAPI", apiStage)
+	funcs, err := imagerFunctions(apiGateway)
+	if err == nil {
+		sparta.Main("SpartaImager", "This is a sample Sparta application", funcs, apiGateway)
+	}
 }
