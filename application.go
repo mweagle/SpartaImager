@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
@@ -89,7 +90,7 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 	return nil
 }
 
-func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w *http.ResponseWriter, logger *logrus.Logger) {
+func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w http.ResponseWriter, logger *logrus.Logger) {
 	logger.WithFields(logrus.Fields{
 		"RequestID": context.AWSRequestID,
 		"Event":     string(*event),
@@ -99,7 +100,7 @@ func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w *ht
 	err := json.Unmarshal([]byte(*event), &lambdaEvent)
 	if err != nil {
 		logger.Error("Failed to unmarshal event data: ", err.Error())
-		http.Error(*w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 
 	logger.WithFields(logrus.Fields{
@@ -139,12 +140,12 @@ func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w *ht
 		//
 		if err != nil {
 			logger.Error("Failed to process event: ", err.Error())
-			http.Error(*w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
 }
 
-func s3ItemInfo(event *json.RawMessage, context *sparta.LambdaContext, w *http.ResponseWriter, logger *logrus.Logger) {
+func s3ItemInfo(event *json.RawMessage, context *sparta.LambdaContext, w http.ResponseWriter, logger *logrus.Logger) {
 	logger.WithFields(logrus.Fields{
 		"RequestID": context.AWSRequestID,
 		"Event":     string(*event),
@@ -154,30 +155,41 @@ func s3ItemInfo(event *json.RawMessage, context *sparta.LambdaContext, w *http.R
 	err := json.Unmarshal([]byte(*event), &lambdaEvent)
 	if err != nil {
 		logger.Error("Failed to unmarshal event data: ", err.Error())
-		http.Error(*w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	getObjectInput := &s3.GetObjectInput{
+		Bucket: aws.String(lambdaEvent.QueryParams["bucketName"]),
+		Key:    aws.String(lambdaEvent.QueryParams["keyName"]),
 	}
 
 	awsSession := awsSession(logger)
 	svc := s3.New(awsSession)
-	result, err := svc.GetObject(&s3.GetObjectInput{
-		Bucket: aws.String(lambdaEvent.QueryParams["bucketName"]),
-		Key:    aws.String(lambdaEvent.QueryParams["keyName"]),
-	})
+	result, err := svc.GetObject(getObjectInput)
 	if nil != err {
 		logger.Error("Failed to process event: ", err.Error())
-		http.Error(*w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	httpResponse := map[string]interface{}{
-		"S3": result,
+	presignedReq, _ := svc.GetObjectRequest(getObjectInput)
+	url, err := presignedReq.Presign(5 * time.Minute)
+	if nil != err {
+		logger.Error("Failed to process event: ", err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	httpResponse := map[string]interface{}{
+		"S3":  result,
+		"URL": url,
+	}
+
 	responseBody, err := json.Marshal(httpResponse)
 	if err != nil {
-		http.Error(*w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	} else {
-		fmt.Fprint(*w, string(responseBody))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, string(responseBody))
 	}
 }
 
