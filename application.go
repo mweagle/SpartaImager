@@ -5,7 +5,6 @@ package main
 //
 
 import (
-	spartaS3 "Sparta/aws/s3"
 	"SpartaImager/transforms"
 	"encoding/json"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	spartaS3 "github.com/mweagle/Sparta/aws/s3"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
