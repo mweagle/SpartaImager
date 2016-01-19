@@ -31,9 +31,14 @@ get: clean ensure_vendor
 	rm -rf ./src/main/vendor/github.com/mweagle/esc/.git
 	git clone --depth=1 https://github.com/mweagle/Sparta ./vendor/github.com/mweagle/Sparta
 	rm -rf ./src/main/vendor/github.com/mweagle/Sparta/.git
+	git clone --depth=1 https://github.com/crewjam/go-cloudformation ./vendor/github.com/crewjam/go-cloudformation
+	rm -rf ./src/main/vendor/github.com/crewjam/go-cloudformation/.git
 
 build: get format vet generate
 	GO15VENDOREXPERIMENT=1 go build .
+
+explore:
+	go run application.go --level info explore
 
 test: build
 	GO15VENDOREXPERIMENT=1 go test ./test/...
@@ -42,7 +47,7 @@ tags:
 	gotags -tag-relative=true -R=true -sort=true -f="tags" -fields=+l .
 
 provision:
-	go run application.go --level debug provision --s3Bucket $(S3_BUCKET)
+	go run application.go --level info provision --s3Bucket $(S3_BUCKET)
 
 describe:
 	go run application.go --level info describe --out ./graph.html
