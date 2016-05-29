@@ -5,7 +5,7 @@ package main
 //
 
 import (
-	"SpartaImager/transforms"
+	"./transforms"
 	"encoding/json"
 	"fmt"
 	"net/http"

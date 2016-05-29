@@ -1,7 +1,7 @@
 package transforms
 
 import (
-	assets "SpartaImager/assets"
+	assets "../assets"
 	"bytes"
 	"fmt"
 	"github.com/Sirupsen/logrus"
