@@ -1,12 +1,13 @@
 package transforms
 
 import (
-	assets "../assets"
 	"bytes"
 	"fmt"
 	"github.com/Sirupsen/logrus"
+	"github.com/mweagle/SpartaImager/assets"
 	"image"
 	"image/draw"
+	// Ensure the JPEG decoder is registered
 	_ "image/jpeg"
 	"image/png"
 	"io"

@@ -5,9 +5,9 @@ package main
 //
 
 import (
-	"./transforms"
 	"encoding/json"
 	"fmt"
+	"github.com/mweagle/SpartaImager/transforms"
 	"net/http"
 	"os"
 	"strings"
