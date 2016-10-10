@@ -252,7 +252,7 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 
 	// Register the function with the API Gateway
 	apiGatewayResource, _ := api.NewResource("/info", s3ItemInfoLambdaFn)
-	method, err := apiGatewayResource.NewMethod("GET")
+	method, err := apiGatewayResource.NewMethod("GET", http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
