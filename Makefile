@@ -24,4 +24,7 @@ provision:
 	go run main.go --level info provision --s3Bucket $(S3_BUCKET)
 
 describe:
-	go run main.go --level info describe --out ./graph.html
+	go run main.go --level info describe --out ./graph.html --s3Bucket $(S3_BUCKET)
+
+delete:
+	go run main.go --level info delete
