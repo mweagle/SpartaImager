@@ -10,19 +10,19 @@ use [Sparta](http://gosparta.io) to:
 ## Provision
 
 ```bash
-S3_BUCKET=weagle SPARTA_S3_TEST_BUCKET=<S3_BUCKET_TO_USE_AS_EVENT_SOURCE> go run main.go provision --s3Bucket ${S3_BUCKET}
+S3_BUCKET=<S3_BUCKET_TO_USE_FOR_CODE_ARTIFACTS> SPARTA_S3_TEST_BUCKET=<S3_BUCKET_TO_USE_AS_EVENT_SOURCE> go run main.go provision --s3Bucket ${S3_BUCKET}
 INFO[0000] ========================================
 INFO[0000] Welcome to SpartaImager                       GoVersion=go1.8.3 LinkFlags= Option=provision SpartaVersion=0.12.0 UTC="2017-06-11T17:47:59Z"
 INFO[0000] ========================================
 INFO[0000] Provisioning service                          BuildID=f1cfa7da8c30f189ce43320299da619410c0001c CodePipelineTrigger= InPlaceUpdates=false NOOP=false Tags=
 INFO[0000] Verifying IAM Lambda execution roles
 INFO[0000] IAM roles verified                            Count=2
-INFO[0000] Checking S3 versioning                        Bucket=weagle VersioningEnabled=true
+INFO[0000] Checking S3 versioning                        Bucket=sparta-code-bucket VersioningEnabled=true
 INFO[0000] Running `go generate`
 ...
 INFO[0054] Waiting for CloudFormation operation to complete
 INFO[0068] Stack output                                  Description="API Gateway URL" Key=APIGatewayURL Value="https://hxkf6p61r7.execute-api.us-west-2.amazonaws.com/v1"
-INFO[0068] Stack provisioned                             CreationTime=2017-06-11 16:44:50.619 +0000 UTC StackId="arn:aws:cloudformation:us-west-2:027159405834:stack/SpartaImager/496cf250-4ec5-11e7-88ca-50a686fc379a" StackName=SpartaImager
+INFO[0068] Stack provisioned                             CreationTime=2017-06-11 16:44:50.619 +0000 UTC StackId="arn:aws:cloudformation:us-west-2:123412341234:stack/SpartaImager/496cf250-4ec5-11e7-88ca-50a686fc379a" StackName=SpartaImager
 
 ```
 
