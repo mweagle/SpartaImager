@@ -3,10 +3,11 @@ package transforms
 import (
 	"bytes"
 	"fmt"
-	"github.com/Sirupsen/logrus"
-	"github.com/mweagle/SpartaImager/assets"
 	"image"
 	"image/draw"
+
+	"github.com/Sirupsen/logrus"
+	"github.com/mweagle/SpartaImager/assets"
 	// Ensure the JPEG decoder is registered
 	_ "image/jpeg"
 	"image/png"
@@ -15,9 +16,11 @@ import (
 )
 
 func watermarkName(suffix int) string {
-	return fmt.Sprintf("/resources/SpartaShield%d.png", suffix)
+	return fmt.Sprintf("/resources/SpartaHelmet%d.png", suffix)
 }
 
+// StampImage handles stamping the user uploaded image with the appropriately
+// sized watermark
 func StampImage(reader io.Reader, logger *logrus.Logger) (io.ReadSeeker, error) {
 
 	target, imageType, err := image.Decode(reader)
