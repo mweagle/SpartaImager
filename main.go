@@ -22,7 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	sparta "github.com/mweagle/Sparta"
-	spartaCGO "github.com/mweagle/Sparta/cgo"
+	spartaAWS "github.com/mweagle/Sparta/aws"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -46,7 +46,7 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 
 	// Only transform if the key doesn't have the _xformed part
 	if !strings.Contains(key, transformPrefix) {
-		awsSession := spartaCGO.NewSession()
+		awsSession := spartaAWS.NewSession(logger)
 		svc := s3.New(awsSession)
 		result, err := svc.GetObject(&s3.GetObjectInput{
 			Bucket: aws.String(bucket),
@@ -114,7 +114,7 @@ func transformImage(event *json.RawMessage,
 		case "s3:ObjectRemoved:Delete":
 			{
 				deleteKey := fmt.Sprintf("%s%s", transformPrefix, eachRecord.S3.Object.Key)
-				awsSession := spartaCGO.NewSession()
+				awsSession := spartaAWS.NewSession(logger)
 				svc := s3.New(awsSession)
 
 				params := &s3.DeleteObjectInput{
@@ -160,7 +160,7 @@ func s3ItemInfo(event *json.RawMessage, context *sparta.LambdaContext, w http.Re
 		Key:    aws.String(lambdaEvent.QueryParams["keyName"]),
 	}
 
-	awsSession := spartaCGO.NewSession()
+	awsSession := spartaAWS.NewSession(logger)
 	svc := s3.New(awsSession)
 	result, err := svc.GetObject(getObjectInput)
 	if nil != err {
@@ -245,25 +245,25 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 	})
 	s3ItemInfoLambdaFn := sparta.NewLambda(iamDynamicRole, s3ItemInfo, s3ItemInfoOptions)
 	// Register the function with the API Gateway
-	// apiGatewayResource, _ := api.NewResource("/info", s3ItemInfoLambdaFn)
-	// method, err := apiGatewayResource.NewMethod("GET", http.StatusOK)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// // Whitelist query string params
-	// method.Parameters["method.request.querystring.keyName"] = true
-	// method.Parameters["method.request.querystring.bucketName"] = true
+	apiGatewayResource, _ := api.NewResource("/info", s3ItemInfoLambdaFn)
+	method, err := apiGatewayResource.NewMethod("GET", http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	// Whitelist query string params
+	method.Parameters["method.request.querystring.keyName"] = true
+	method.Parameters["method.request.querystring.bucketName"] = true
 	lambdaFunctions = append(lambdaFunctions, s3ItemInfoLambdaFn)
 
 	return lambdaFunctions, nil
 }
 
 func main() {
-	// apiStage := sparta.NewStage("v1")
-	// apiGateway := sparta.NewAPIGateway("SpartaImagerAPI", apiStage)
-	// apiGateway.CORSEnabled = true
+	apiStage := sparta.NewStage("v1")
+	apiGateway := sparta.NewAPIGateway("SpartaImagerAPI", apiStage)
+	apiGateway.CORSEnabled = true
 	funcs, err := imagerFunctions(nil)
 	if err == nil {
-		spartaCGO.Main("SpartaImagerRoundtrip", "This is a sample Sparta application", funcs, nil, nil)
+		sparta.Main("SpartaImagerRoundtrip", "This is a sample Sparta application", funcs, apiGateway, nil)
 	}
 }
