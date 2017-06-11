@@ -1,56 +1,42 @@
 package main
 
-// Embed the shields
-//go:generate go run ./vendor/github.com/mjibson/esc/main.go -o ./assets/CONSTANTS.go -pkg assets ./resources
+// Embed the Sparta Helmets for the watermark
+//go:generate go run $GOPATH/src/github.com/mjibson/esc/main.go -o ./assets/CONSTANTS.go -pkg assets ./resources
 //
 
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/mweagle/SpartaImager/transforms"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/mweagle/SpartaImager/transforms"
+
+	spartaAWS "github.com/mweagle/Sparta/aws"
 	spartaS3 "github.com/mweagle/Sparta/aws/s3"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	sparta "github.com/mweagle/Sparta"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
-func paramVal(keyName string, defaultValue string) string {
+func s3ARNParamValue(keyName string, defaultValue string) string {
 	value := os.Getenv(keyName)
 	if "" == value {
 		value = defaultValue
 	}
+	// If it doesn't look like an S3 ARN, add that...
+	if !strings.Contains(value, "arn:aws:s3:::") {
+		value = fmt.Sprintf("arn:aws:s3:::%s", value)
+	}
 	return value
 }
 
-var s3EventBroadcasterBucket = paramVal("S3_TEST_BUCKET", "arn:aws:s3:::PublicS3Bucket")
-var s3SourceBucket = paramVal("S3_BUCKET", "arn:aws:s3:::MyS3Bucket")
-
-// Returns an AWS Session (https://github.com/aws/aws-sdk-go/wiki/Getting-Started-Configuration)
-// object that attaches a debug level handler to all AWS requests from services
-// sharing the session value.
-func awsSession(logger *logrus.Logger) *session.Session {
-	sess := session.New()
-	sess.Handlers.Send.PushFront(func(r *request.Request) {
-		logger.WithFields(logrus.Fields{
-			"Service":   r.ClientInfo.ServiceName,
-			"Operation": r.Operation.Name,
-			"Method":    r.Operation.HTTPMethod,
-			"Path":      r.Operation.HTTPPath,
-			"Payload":   r.Params,
-		}).Info("AWS Request")
-	})
-	return sess
-}
+var s3EventBroadcasterBucket = s3ARNParamValue("SPARTA_S3_TEST_BUCKET", "arn:aws:s3:::PublicS3Bucket")
 
 const transformPrefix = "xformed_"
 
@@ -58,7 +44,7 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 
 	// Only transform if the key doesn't have the _xformed part
 	if !strings.Contains(key, transformPrefix) {
-		awsSession := awsSession(logger)
+		awsSession := spartaAWS.NewSession(logger)
 		svc := s3.New(awsSession)
 		result, err := svc.GetObject(&s3.GetObjectInput{
 			Bucket: aws.String(bucket),
@@ -91,11 +77,15 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 	return nil
 }
 
-func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w http.ResponseWriter, logger *logrus.Logger) {
+func transformImage(event *json.RawMessage,
+	context *sparta.LambdaContext,
+	w http.ResponseWriter,
+	logger *logrus.Logger) {
+
 	logger.WithFields(logrus.Fields{
 		"RequestID": context.AWSRequestID,
 		"Event":     string(*event),
-	}).Info("Request received :)")
+	}).Info("Request received 👍")
 
 	var lambdaEvent spartaS3.Event
 	err := json.Unmarshal([]byte(*event), &lambdaEvent)
@@ -119,7 +109,7 @@ func transformImage(event *json.RawMessage, context *sparta.LambdaContext, w htt
 		case "s3:ObjectRemoved:Delete":
 			{
 				deleteKey := fmt.Sprintf("%s%s", transformPrefix, eachRecord.S3.Object.Key)
-				awsSession := awsSession(logger)
+				awsSession := spartaAWS.NewSession(logger)
 				svc := s3.New(awsSession)
 
 				params := &s3.DeleteObjectInput{
@@ -165,7 +155,7 @@ func s3ItemInfo(event *json.RawMessage, context *sparta.LambdaContext, w http.Re
 		Key:    aws.String(lambdaEvent.QueryParams["keyName"]),
 	}
 
-	awsSession := awsSession(logger)
+	awsSession := spartaAWS.NewSession(logger)
 	svc := s3.New(awsSession)
 	result, err := svc.GetObject(getObjectInput)
 	if nil != err {
