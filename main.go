@@ -262,7 +262,7 @@ func main() {
 	apiStage := sparta.NewStage("v1")
 	apiGateway := sparta.NewAPIGateway("SpartaImagerAPI", apiStage)
 	apiGateway.CORSEnabled = true
-	funcs, err := imagerFunctions(nil)
+	funcs, err := imagerFunctions(apiGateway)
 	if err == nil {
 		sparta.Main("SpartaImagerRoundtrip", "This is a sample Sparta application", funcs, apiGateway, nil)
 	}
