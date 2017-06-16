@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mweagle/SpartaImager/transforms"
-
+	spartaCF "github.com/mweagle/Sparta/aws/cloudformation"
 	spartaS3 "github.com/mweagle/Sparta/aws/s3"
+	"github.com/mweagle/SpartaImager/transforms"
 
 	"net/url"
 
@@ -263,7 +263,12 @@ func main() {
 	apiGateway := sparta.NewAPIGateway("SpartaImagerAPI", apiStage)
 	apiGateway.CORSEnabled = true
 	funcs, err := imagerFunctions(apiGateway)
+	stackName := spartaCF.UserScopedStackName("SpartaImager")
 	if err == nil {
-		sparta.Main("SpartaImagerRoundtrip", "This is a sample Sparta application", funcs, apiGateway, nil)
+		sparta.Main(stackName,
+			"This is a sample Sparta application",
+			funcs,
+			apiGateway,
+			nil)
 	}
 }
