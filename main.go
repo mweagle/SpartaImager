@@ -79,18 +79,18 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 	return nil
 }
 
-func transformImage(event *json.RawMessage,
-	context *sparta.LambdaContext,
-	w http.ResponseWriter,
-	logger *logrus.Logger) {
+func transformImage(w http.ResponseWriter, r *http.Request) {
+	logger, _ := r.Context().Value(sparta.ContextKeyLogger).(*logrus.Logger)
+	lambdaContext, _ := r.Context().Value(sparta.ContextKeyLambdaContext).(*sparta.LambdaContext)
 
 	logger.WithFields(logrus.Fields{
-		"RequestID": context.AWSRequestID,
-		"Event":     string(*event),
+		"RequestID": lambdaContext.AWSRequestID,
 	}).Info("Request received 👍")
 
+	decoder := json.NewDecoder(r.Body)
+	defer r.Body.Close()
 	var lambdaEvent spartaS3.Event
-	err := json.Unmarshal([]byte(*event), &lambdaEvent)
+	err := decoder.Decode(&lambdaEvent)
 	if err != nil {
 		logger.Error("Failed to unmarshal event data: ", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -141,14 +141,18 @@ func transformImage(event *json.RawMessage,
 	}
 }
 
-func s3ItemInfo(event *json.RawMessage, context *sparta.LambdaContext, w http.ResponseWriter, logger *logrus.Logger) {
+func s3ItemInfo(w http.ResponseWriter, r *http.Request) {
+	logger, _ := r.Context().Value(sparta.ContextKeyLogger).(*logrus.Logger)
+	lambdaContext, _ := r.Context().Value(sparta.ContextKeyLambdaContext).(*sparta.LambdaContext)
+
 	logger.WithFields(logrus.Fields{
-		"RequestID": context.AWSRequestID,
-		"Event":     string(*event),
+		"RequestID": lambdaContext.AWSRequestID,
 	}).Info("Request received")
 
+	decoder := json.NewDecoder(r.Body)
+	defer r.Body.Close()
 	var lambdaEvent sparta.APIGatewayLambdaJSONEvent
-	err := json.Unmarshal([]byte(*event), &lambdaEvent)
+	err := decoder.Decode(&lambdaEvent)
 	if err != nil {
 		logger.Error("Failed to unmarshal event data: ", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -217,7 +221,10 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 		MemorySize:  128,
 		Timeout:     30,
 	}
-	lambdaFn := sparta.NewLambda(iamRole, transformImage, transformOptions)
+	lambdaFn := sparta.HandleAWSLambda(sparta.LambdaName(transformImage),
+		http.HandlerFunc(transformImage),
+		iamRole)
+	lambdaFn.Options = transformOptions
 
 	//////////////////////////////////////////////////////////////////////////////
 	// S3 configuration
@@ -233,17 +240,19 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 	//////////////////////////////////////////////////////////////////////////////
 	// 2 - Lambda function that allows for querying of S3 information
 	//////////////////////////////////////////////////////////////////////////////
-	s3ItemInfoOptions := &sparta.LambdaFunctionOptions{
-		Description: "Get information about an item in S3 via querystring params",
-		MemorySize:  128,
-		Timeout:     10,
-	}
 	var iamDynamicRole = sparta.IAMRoleDefinition{}
 	iamDynamicRole.Privileges = append(iamDynamicRole.Privileges, sparta.IAMRolePrivilege{
 		Actions:  []string{"s3:GetObject"},
 		Resource: resourceArn,
 	})
-	s3ItemInfoLambdaFn := sparta.NewLambda(iamDynamicRole, s3ItemInfo, s3ItemInfoOptions)
+	s3ItemInfoLambdaFn := sparta.HandleAWSLambda(sparta.LambdaName(s3ItemInfo),
+		http.HandlerFunc(s3ItemInfo),
+		iamDynamicRole)
+	s3ItemInfoOptions.Options = &sparta.LambdaFunctionOptions{
+		Description: "Get information about an item in S3 via querystring params",
+		MemorySize:  128,
+		Timeout:     10,
+	}
 	// Register the function with the API Gateway
 	apiGatewayResource, _ := api.NewResource("/info", s3ItemInfoLambdaFn)
 	method, err := apiGatewayResource.NewMethod("GET", http.StatusOK)
