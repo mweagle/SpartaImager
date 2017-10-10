@@ -245,10 +245,11 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 		Actions:  []string{"s3:GetObject"},
 		Resource: resourceArn,
 	})
+
 	s3ItemInfoLambdaFn := sparta.HandleAWSLambda(sparta.LambdaName(s3ItemInfo),
 		http.HandlerFunc(s3ItemInfo),
 		iamDynamicRole)
-	s3ItemInfoOptions.Options = &sparta.LambdaFunctionOptions{
+	s3ItemInfoLambdaFn.Options = &sparta.LambdaFunctionOptions{
 		Description: "Get information about an item in S3 via querystring params",
 		MemorySize:  128,
 		Timeout:     10,
