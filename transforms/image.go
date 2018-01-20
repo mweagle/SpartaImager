@@ -6,8 +6,8 @@ import (
 	"image"
 	"image/draw"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/mweagle/SpartaImager/assets"
+	"github.com/sirupsen/logrus"
 	// Ensure the JPEG decoder is registered
 	_ "image/jpeg"
 	"image/png"

@@ -5,27 +5,38 @@ package main
 //
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
-	spartaCF "github.com/mweagle/Sparta/aws/cloudformation"
-	spartaS3 "github.com/mweagle/Sparta/aws/s3"
-	"github.com/mweagle/SpartaImager/transforms"
-
-	"net/url"
-
-	"github.com/Sirupsen/logrus"
+	awsLambdaEvents "github.com/aws/aws-lambda-go/events"
+	awsLambdaContext "github.com/aws/aws-lambda-go/lambdacontext"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	sparta "github.com/mweagle/Sparta"
 	spartaAWS "github.com/mweagle/Sparta/aws"
+	spartaCF "github.com/mweagle/Sparta/aws/cloudformation"
+	spartaEvents "github.com/mweagle/Sparta/aws/events"
+	"github.com/mweagle/SpartaImager/transforms"
+	"github.com/sirupsen/logrus"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
+
+type transformedResponse struct {
+	Bucket string
+	Key    string
+}
+
+type itemInfoResponse struct {
+	S3  *s3.GetObjectOutput
+	URL string
+}
+
 func s3ARNParamValue(keyName string, defaultValue string) string {
 	value := os.Getenv(keyName)
 	if "" == value {
@@ -38,7 +49,8 @@ func s3ARNParamValue(keyName string, defaultValue string) string {
 	return value
 }
 
-var s3EventBroadcasterBucket = s3ARNParamValue("SPARTA_S3_TEST_BUCKET", "arn:aws:s3:::PublicS3Bucket")
+var s3EventBroadcasterBucket = s3ARNParamValue("SPARTA_S3_TEST_BUCKET",
+	"arn:aws:s3:::PublicS3Bucket")
 
 const transformPrefix = "xformed_"
 
@@ -56,52 +68,37 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 			return err
 		}
 		defer result.Body.Close()
-		transformed, err := transforms.StampImage(result.Body, logger)
-		if err != nil {
-			return err
+
+		transformed, transformedErr := transforms.StampImage(result.Body, logger)
+		if transformedErr != nil {
+			return transformedErr
 		}
 		// Put the encoded image to a byte buffer, then wrap a reader around it.
-		uploadResult, err := svc.PutObject(&s3.PutObjectInput{
+		_, uploadResultErr := svc.PutObject(&s3.PutObjectInput{
 			Body:   transformed,
 			Bucket: aws.String(bucket),
 			Key:    aws.String(fmt.Sprintf("%s%s", transformPrefix, key)),
 		})
-		if err != nil {
-			return err
+		if uploadResultErr != nil {
+			return uploadResultErr
 		}
-		logger.WithFields(logrus.Fields{
-			"Transformed": uploadResult,
-		}).Info("Image transformed")
-
 	} else {
 		logger.Info("File already transformed")
 	}
 	return nil
 }
 
-func transformImage(w http.ResponseWriter, r *http.Request) {
-	logger, _ := r.Context().Value(sparta.ContextKeyLogger).(*logrus.Logger)
-	lambdaContext, _ := r.Context().Value(sparta.ContextKeyLambdaContext).(*sparta.LambdaContext)
-
+func transformImage(ctx context.Context, event awsLambdaEvents.S3Event) ([]transformedResponse, error) {
+	logger, _ := ctx.Value(sparta.ContextKeyLogger).(*logrus.Logger)
+	lambdaContext, _ := awsLambdaContext.FromContext(ctx)
 	logger.WithFields(logrus.Fields{
-		"RequestID": lambdaContext.AWSRequestID,
+		"RequestID":   lambdaContext.AwsRequestID,
+		"RecordCount": len(event.Records),
 	}).Info("Request received 👍")
 
-	decoder := json.NewDecoder(r.Body)
-	defer r.Body.Close()
-	var lambdaEvent spartaS3.Event
-	err := decoder.Decode(&lambdaEvent)
-	if err != nil {
-		logger.Error("Failed to unmarshal event data: ", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	responses := make([]transformedResponse, 0)
 
-	logger.WithFields(logrus.Fields{
-		"S3Event": fmt.Sprintf("%+v", lambdaEvent),
-	}).Info("S3 Notification")
-
-	for _, eachRecord := range lambdaEvent.Records {
-		err = nil
+	for _, eachRecord := range event.Records {
 		// What happened?
 		switch eachRecord.EventName {
 		case "ObjectCreated:Put":
@@ -109,7 +106,19 @@ func transformImage(w http.ResponseWriter, r *http.Request) {
 				// Make sure the Name and Key are URL decoded. Spaces are + encoded
 				unescapedKeyName, _ := url.QueryUnescape(eachRecord.S3.Bucket.Name)
 				unescapedBucketName, _ := url.QueryUnescape(eachRecord.S3.Object.Key)
-				err = stampImage(unescapedKeyName, unescapedBucketName, logger)
+				stampErr := stampImage(unescapedKeyName, unescapedBucketName, logger)
+				if stampErr != nil {
+					return nil, stampErr
+				}
+
+				logger.WithFields(logrus.Fields{
+					"item": eachRecord.S3.Object.Key,
+				}).Info("Image stamped")
+
+				responses = append(responses, transformedResponse{
+					Bucket: unescapedKeyName,
+					Key:    unescapedKeyName,
+				})
 			}
 		case "s3:ObjectRemoved:Delete":
 			{
@@ -121,76 +130,50 @@ func transformImage(w http.ResponseWriter, r *http.Request) {
 					Bucket: aws.String(eachRecord.S3.Bucket.Name),
 					Key:    aws.String(deleteKey),
 				}
-				resp, err := svc.DeleteObject(params)
-				logger.WithFields(logrus.Fields{
-					"Response": resp,
-					"Error":    err,
-				}).Info("Deleted object")
+				deleteObj, deleteObjErr := svc.DeleteObject(params)
+				if deleteObjErr != nil {
+					logger.WithFields(logrus.Fields{
+						"Response": deleteObj,
+					}).Info("Deleted object")
+				}
 			}
 		default:
 			{
 				logger.Info("Unsupported event: ", eachRecord.EventName)
 			}
 		}
-
-		//
-		if err != nil {
-			logger.Error("Failed to process event: ", err.Error())
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
 	}
+	return responses, nil
 }
 
-func s3ItemInfo(w http.ResponseWriter, r *http.Request) {
-	logger, _ := r.Context().Value(sparta.ContextKeyLogger).(*logrus.Logger)
-	lambdaContext, _ := r.Context().Value(sparta.ContextKeyLambdaContext).(*sparta.LambdaContext)
+func s3ItemInfo(ctx context.Context, apigRequest spartaEvents.APIGatewayRequest) (*itemInfoResponse, error) {
+	logger, _ := ctx.Value(sparta.ContextKeyLogger).(*logrus.Logger)
+	lambdaContext, _ := awsLambdaContext.FromContext(ctx)
 
 	logger.WithFields(logrus.Fields{
-		"RequestID": lambdaContext.AWSRequestID,
+		"RequestID": lambdaContext.AwsRequestID,
 	}).Info("Request received")
 
-	decoder := json.NewDecoder(r.Body)
-	defer r.Body.Close()
-	var lambdaEvent sparta.APIGatewayLambdaJSONEvent
-	err := decoder.Decode(&lambdaEvent)
-	if err != nil {
-		logger.Error("Failed to unmarshal event data: ", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	getObjectInput := &s3.GetObjectInput{
-		Bucket: aws.String(lambdaEvent.QueryParams["bucketName"]),
-		Key:    aws.String(lambdaEvent.QueryParams["keyName"]),
+		Bucket: aws.String(apigRequest.QueryParams["bucketName"]),
+		Key:    aws.String(apigRequest.QueryParams["keyName"]),
 	}
 
 	awsSession := spartaAWS.NewSession(logger)
 	svc := s3.New(awsSession)
 	result, err := svc.GetObject(getObjectInput)
 	if nil != err {
-		logger.Error("Failed to process event: ", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	presignedReq, _ := svc.GetObjectRequest(getObjectInput)
 	url, err := presignedReq.Presign(5 * time.Minute)
 	if nil != err {
-		logger.Error("Failed to process event: ", err.Error())
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
-	httpResponse := map[string]interface{}{
-		"S3":  result,
-		"URL": url,
-	}
-
-	responseBody, err := json.Marshal(httpResponse)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	} else {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, string(responseBody))
-	}
+	return &itemInfoResponse{
+		S3:  result,
+		URL: url,
+	}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -218,11 +201,11 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 	// transform lambda doesn't fail early.
 	transformOptions := &sparta.LambdaFunctionOptions{
 		Description: "Stamp assets in S3",
-		MemorySize:  128,
-		Timeout:     30,
+		MemorySize:  256,
+		Timeout:     10,
 	}
 	lambdaFn := sparta.HandleAWSLambda(sparta.LambdaName(transformImage),
-		http.HandlerFunc(transformImage),
+		transformImage,
 		iamRole)
 	lambdaFn.Options = transformOptions
 
@@ -247,24 +230,25 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 	})
 
 	s3ItemInfoLambdaFn := sparta.HandleAWSLambda(sparta.LambdaName(s3ItemInfo),
-		http.HandlerFunc(s3ItemInfo),
+		s3ItemInfo,
 		iamDynamicRole)
 	s3ItemInfoLambdaFn.Options = &sparta.LambdaFunctionOptions{
 		Description: "Get information about an item in S3 via querystring params",
 		MemorySize:  128,
 		Timeout:     10,
 	}
-	// Register the function with the API Gateway
-	apiGatewayResource, _ := api.NewResource("/info", s3ItemInfoLambdaFn)
-	method, err := apiGatewayResource.NewMethod("GET", http.StatusOK)
-	if err != nil {
-		return nil, err
+	// Register the function with the API Gateway iff defined
+	if api != nil {
+		apiGatewayResource, _ := api.NewResource("/info", s3ItemInfoLambdaFn)
+		method, err := apiGatewayResource.NewMethod("GET", http.StatusOK)
+		if err != nil {
+			return nil, err
+		}
+		// Whitelist query string params
+		method.Parameters["method.request.querystring.keyName"] = true
+		method.Parameters["method.request.querystring.bucketName"] = true
 	}
-	// Whitelist query string params
-	method.Parameters["method.request.querystring.keyName"] = true
-	method.Parameters["method.request.querystring.bucketName"] = true
 	lambdaFunctions = append(lambdaFunctions, s3ItemInfoLambdaFn)
-
 	return lambdaFunctions, nil
 }
 
