@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	sparta "github.com/mweagle/Sparta"
 	spartaAWS "github.com/mweagle/Sparta/aws"
+	spartaAPIGateway "github.com/mweagle/Sparta/aws/apigateway"
 	spartaCF "github.com/mweagle/Sparta/aws/cloudformation"
 	spartaEvents "github.com/mweagle/Sparta/aws/events"
 	"github.com/mweagle/SpartaImager/transforms"
@@ -88,7 +89,8 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 	return nil
 }
 
-func transformImage(ctx context.Context, event awsLambdaEvents.S3Event) ([]transformedResponse, error) {
+func transformImage(ctx context.Context,
+	event awsLambdaEvents.S3Event) (*spartaAPIGateway.Response, error) {
 	logger, _ := ctx.Value(sparta.ContextKeyLogger).(*logrus.Logger)
 	lambdaContext, _ := awsLambdaContext.FromContext(ctx)
 	logger.WithFields(logrus.Fields{
@@ -108,7 +110,7 @@ func transformImage(ctx context.Context, event awsLambdaEvents.S3Event) ([]trans
 				unescapedBucketName, _ := url.QueryUnescape(eachRecord.S3.Object.Key)
 				stampErr := stampImage(unescapedKeyName, unescapedBucketName, logger)
 				if stampErr != nil {
-					return nil, stampErr
+					return nil, spartaAPIGateway.NewErrorResponse(http.StatusInternalServerError, stampErr)
 				}
 
 				logger.WithFields(logrus.Fields{
@@ -143,10 +145,12 @@ func transformImage(ctx context.Context, event awsLambdaEvents.S3Event) ([]trans
 			}
 		}
 	}
-	return responses, nil
+	return spartaAPIGateway.NewResponse(http.StatusOK, responses), nil
 }
 
-func s3ItemInfo(ctx context.Context, apigRequest spartaEvents.APIGatewayRequest) (*itemInfoResponse, error) {
+func s3ItemInfo(ctx context.Context,
+	apigRequest spartaEvents.APIGatewayRequest) (*spartaAPIGateway.Response, error) {
+
 	logger, _ := ctx.Value(sparta.ContextKeyLogger).(*logrus.Logger)
 	lambdaContext, _ := awsLambdaContext.FromContext(ctx)
 
@@ -163,17 +167,19 @@ func s3ItemInfo(ctx context.Context, apigRequest spartaEvents.APIGatewayRequest)
 	svc := s3.New(awsSession)
 	result, err := svc.GetObject(getObjectInput)
 	if nil != err {
-		return nil, err
+		return spartaAPIGateway.NewResponse(http.StatusNotFound, map[string]string{
+			"error": err.Error(),
+		}), nil
 	}
 	presignedReq, _ := svc.GetObjectRequest(getObjectInput)
 	url, err := presignedReq.Presign(5 * time.Minute)
 	if nil != err {
 		return nil, err
 	}
-	return &itemInfoResponse{
+	return spartaAPIGateway.NewResponse(http.StatusOK, &itemInfoResponse{
 		S3:  result,
 		URL: url,
-	}, nil
+	}), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -204,7 +210,7 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 		MemorySize:  256,
 		Timeout:     10,
 	}
-	lambdaFn := sparta.HandleAWSLambda(sparta.LambdaName(transformImage),
+	lambdaFn, _ := sparta.NewAWSLambda(sparta.LambdaName(transformImage),
 		transformImage,
 		iamRole)
 	lambdaFn.Options = transformOptions
@@ -258,6 +264,7 @@ func main() {
 	apiGateway.CORSEnabled = true
 	funcs, err := imagerFunctions(apiGateway)
 	stackName := spartaCF.UserScopedStackName("SpartaImager")
+
 	if err == nil {
 		sparta.Main(stackName,
 			"This is a sample Sparta application",
