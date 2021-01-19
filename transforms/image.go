@@ -7,7 +7,8 @@ import (
 	"image/draw"
 
 	"github.com/mweagle/SpartaImager/assets"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
+
 	// Ensure the JPEG decoder is registered
 	_ "image/jpeg"
 	"image/png"
@@ -21,44 +22,48 @@ func watermarkName(suffix int) string {
 
 // StampImage handles stamping the user uploaded image with the appropriately
 // sized watermark
-func StampImage(reader io.Reader, logger *logrus.Logger) (io.ReadSeeker, error) {
+func StampImage(reader io.Reader, logger *zerolog.Logger) (io.ReadSeeker, error) {
 
 	target, imageType, err := image.Decode(reader)
 	if err != nil {
-		logger.WithFields(logrus.Fields{
-			"Error": err,
-		}).Info("Failed to decode image")
+		logger.Error().
+			Err(err).
+			Msg("Failed to decode image")
 		return nil, err
 	}
 
 	// Pick the longer edge and a reasonably sized stamp
 	maxEdge := math.Max(float64(target.Bounds().Max.X), float64(target.Bounds().Max.Y))
 	edgeLog := int(math.Floor(math.Log2(maxEdge))) - 1
-	logger.WithFields(logrus.Fields{
-		"ImageType":    imageType,
-		"MaxEdge":      maxEdge,
-		"EdgeLog":      edgeLog,
-		"TargetBounds": target.Bounds(),
-	}).Info("Target Dimensions")
+
+	logger.Error().
+		Str("ImageType", imageType).
+		Float64("MaxEdge", maxEdge).
+		Int("EdgeLog", edgeLog).
+		Interface("TargetBounds", target.Bounds()).
+		Msg("Target Dimensions")
+
 	watermarkSuffix := int(math.Max(32, math.Pow(2, math.Min(float64(8), float64(edgeLog)))))
 	resourceName := watermarkName(watermarkSuffix)
-	logger.Info("Watermark resource: ", resourceName)
+	logger.Info().
+		Str("Resource", resourceName).
+		Msg("Watermark resource")
 
 	byteSource, err := assets.FSByte(false, resourceName)
 	if err != nil {
-		logger.WithFields(logrus.Fields{
-			"Error":        err,
-			"Name":         resourceName,
-			"TargetBounds": target.Bounds(),
-		}).Warn("Failed to load computed watermark. Falling to default.")
+		logger.Warn().
+			Err(err).
+			Str("Name", resourceName).
+			Interface("TargetBounds", target.Bounds()).
+			Msg("Failed to load computed watermark. Falling to default")
 		byteSource = assets.FSMustByte(false, watermarkName(16))
 	}
 	stampReader := bytes.NewReader(byteSource)
 	stamp, _, err := image.Decode(stampReader)
 	if err != nil {
-		logger.WithFields(logrus.Fields{
-			"Error": err,
-		}).Info("Failed to load stamp image")
+		logger.Info().
+			Err(err).
+			Msg("Failed to load stamp image")
 		return nil, err
 	}
 
@@ -71,13 +76,12 @@ func StampImage(reader io.Reader, logger *logrus.Logger) (io.ReadSeeker, error) 
 	targetRect.Min.X = (targetRect.Max.X - stamp.Bounds().Max.X)
 	targetRect.Min.Y = (targetRect.Max.Y - stamp.Bounds().Max.Y)
 
-	logger.WithFields(logrus.Fields{
-		"TargetBounds": target.Bounds(),
-		"StampBounds":  stamp.Bounds(),
-		"TargetRect":   targetRect,
-	}).Info("Drawing")
+	logger.Info().
+		Interface("TargetBounds", target.Bounds()).
+		Interface("StampBounds", stamp.Bounds()).
+		Interface("TargetRect", targetRect).
+		Msg("Drawing")
 
-	logger.Debug("Composing image")
 	draw.Draw(compositedImage, targetRect, stamp, image.Point{0, 0}, draw.Over)
 	buf := new(bytes.Buffer)
 	err = png.Encode(buf, compositedImage)

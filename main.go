@@ -23,7 +23,7 @@ import (
 	spartaCF "github.com/mweagle/Sparta/aws/cloudformation"
 	spartaEvents "github.com/mweagle/Sparta/aws/events"
 	"github.com/mweagle/SpartaImager/transforms"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -55,7 +55,7 @@ var s3EventBroadcasterBucket = s3ARNParamValue("SPARTA_S3_TEST_BUCKET",
 
 const transformPrefix = "xformed_"
 
-func stampImage(bucket string, key string, logger *logrus.Logger) error {
+func stampImage(bucket string, key string, logger *zerolog.Logger) error {
 
 	// Only transform if the key doesn't have the _xformed part
 	if !strings.Contains(key, transformPrefix) {
@@ -84,19 +84,20 @@ func stampImage(bucket string, key string, logger *logrus.Logger) error {
 			return uploadResultErr
 		}
 	} else {
-		logger.Info("File already transformed")
+		logger.Info().Msg("File already transformed")
 	}
 	return nil
 }
 
 func transformImage(ctx context.Context,
 	event awsLambdaEvents.S3Event) (*spartaAPIGateway.Response, error) {
-	logger, _ := ctx.Value(sparta.ContextKeyLogger).(*logrus.Logger)
+	logger, _ := ctx.Value(sparta.ContextKeyLogger).(*zerolog.Logger)
 	lambdaContext, _ := awsLambdaContext.FromContext(ctx)
-	logger.WithFields(logrus.Fields{
-		"RequestID":   lambdaContext.AwsRequestID,
-		"RecordCount": len(event.Records),
-	}).Info("Request received 👍")
+
+	logger.Info().
+		Str("RequestID", lambdaContext.AwsRequestID).
+		Int("RecordCount", len(event.Records)).
+		Msg("Request received 👍")
 
 	responses := make([]transformedResponse, 0)
 
@@ -113,10 +114,9 @@ func transformImage(ctx context.Context,
 					return nil, spartaAPIGateway.NewErrorResponse(http.StatusInternalServerError, stampErr)
 				}
 
-				logger.WithFields(logrus.Fields{
-					"item": eachRecord.S3.Object.Key,
-				}).Info("Image stamped")
-
+				logger.Info().
+					Interface("Item", eachRecord.S3.Object.Key).
+					Msg("Image stamped")
 				responses = append(responses, transformedResponse{
 					Bucket: unescapedKeyName,
 					Key:    unescapedKeyName,
@@ -134,14 +134,16 @@ func transformImage(ctx context.Context,
 				}
 				deleteObj, deleteObjErr := svc.DeleteObject(params)
 				if deleteObjErr != nil {
-					logger.WithFields(logrus.Fields{
-						"Response": deleteObj,
-					}).Info("Deleted object")
+					logger.Info().
+						Interface("Response", deleteObj).
+						Msg("Deleted object")
 				}
 			}
 		default:
 			{
-				logger.Info("Unsupported event: ", eachRecord.EventName)
+				logger.Info().
+					Interface("Event", eachRecord.EventName).
+					Msg("Unsupported event")
 			}
 		}
 	}
@@ -151,12 +153,12 @@ func transformImage(ctx context.Context,
 func s3ItemInfo(ctx context.Context,
 	apigRequest spartaEvents.APIGatewayRequest) (*spartaAPIGateway.Response, error) {
 
-	logger, _ := ctx.Value(sparta.ContextKeyLogger).(*logrus.Logger)
+	logger, _ := ctx.Value(sparta.ContextKeyLogger).(*zerolog.Logger)
 	lambdaContext, _ := awsLambdaContext.FromContext(ctx)
 
-	logger.WithFields(logrus.Fields{
-		"RequestID": lambdaContext.AwsRequestID,
-	}).Info("Request received")
+	logger.Info().
+		Str("RequestID", lambdaContext.AwsRequestID).
+		Msg("Request received")
 
 	getObjectInput := &s3.GetObjectInput{
 		Bucket: aws.String(apigRequest.QueryParams["bucketName"]),
@@ -207,8 +209,8 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 	// transform lambda doesn't fail early.
 	transformOptions := &sparta.LambdaFunctionOptions{
 		Description: "Stamp assets in S3",
-		MemorySize:  256,
-		Timeout:     10,
+		MemorySize:  512,
+		Timeout:     20,
 	}
 	lambdaFn, _ := sparta.NewAWSLambda(sparta.LambdaName(transformImage),
 		transformImage,
@@ -235,7 +237,7 @@ func imagerFunctions(api *sparta.API) ([]*sparta.LambdaAWSInfo, error) {
 		Resource: resourceArn,
 	})
 
-	s3ItemInfoLambdaFn := sparta.HandleAWSLambda(sparta.LambdaName(s3ItemInfo),
+	s3ItemInfoLambdaFn, _ := sparta.NewAWSLambda(sparta.LambdaName(s3ItemInfo),
 		s3ItemInfo,
 		iamDynamicRole)
 	s3ItemInfoLambdaFn.Options = &sparta.LambdaFunctionOptions{

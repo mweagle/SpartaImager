@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -100,7 +102,24 @@ func (f *_escFile) Close() error {
 }
 
 func (f *_escFile) Readdir(count int) ([]os.FileInfo, error) {
-	return nil, nil
+	if !f.isDir {
+		return nil, fmt.Errorf(" escFile.Readdir: '%s' is not directory", f.name)
+	}
+
+	fis, ok := _escDirs[f.local]
+	if !ok {
+		return nil, fmt.Errorf(" escFile.Readdir: '%s' is directory, but we have no info about content of this dir, local=%s", f.name, f.local)
+	}
+	limit := count
+	if count <= 0 || limit > len(fis) {
+		limit = len(fis)
+	}
+
+	if len(fis) == 0 && count > 0 {
+		return nil, io.EOF
+	}
+
+	return fis[0:limit], nil
 }
 
 func (f *_escFile) Stat() (os.FileInfo, error) {
@@ -191,6 +210,7 @@ func FSMustString(useLocal bool, name string) string {
 var _escData = map[string]*_escFile{
 
 	"/resources/SpartaHelmet.png": {
+		name:    "SpartaHelmet.png",
 		local:   "resources/SpartaHelmet.png",
 		size:    31510,
 		modtime: 1454264065,
@@ -721,6 +741,7 @@ UTUHjkRmfVLrlZ4/4L7bN1+WVjMgoXs14YU+QoHFR4HTaYpTLkI0tyCYGQgxKckO8SSl2gf3ee9giXbt
 	},
 
 	"/resources/SpartaHelmet128.png": {
+		name:    "SpartaHelmet128.png",
 		local:   "resources/SpartaHelmet128.png",
 		size:    20356,
 		modtime: 1497199806,
@@ -1066,6 +1087,7 @@ Zo/jhE8AAA==
 	},
 
 	"/resources/SpartaHelmet16.png": {
+		name:    "SpartaHelmet16.png",
 		local:   "resources/SpartaHelmet16.png",
 		size:    1926,
 		modtime: 1497199870,
@@ -1103,6 +1125,7 @@ X68Z9m2ZJKVp8y6bF1f9ZuWZodCKdX0Jlk86LiaR0hyVofxvAAAA//9mhzjohgcAAA==
 	},
 
 	"/resources/SpartaHelmet256.png": {
+		name:    "SpartaHelmet256.png",
 		local:   "resources/SpartaHelmet256.png",
 		size:    45926,
 		modtime: 1497199772,
@@ -1874,6 +1897,7 @@ vvX9Np53w70n4EnC4kHBOBkX7xmO75+YPolgP0m8cW6zfQCF9CRDkye5P+8Jwl6mvEgTG3P05/fuUqH9
 	},
 
 	"/resources/SpartaHelmet32.png": {
+		name:    "SpartaHelmet32.png",
 		local:   "resources/SpartaHelmet32.png",
 		size:    3627,
 		modtime: 1497199857,
@@ -1940,6 +1964,7 @@ W98t5v8CAAD//90BJ0YrDgAA
 	},
 
 	"/resources/SpartaHelmet64.png": {
+		name:    "SpartaHelmet64.png",
 		local:   "resources/SpartaHelmet64.png",
 		size:    8422,
 		modtime: 1497199839,
@@ -2085,13 +2110,21 @@ uicfOZz5PMvLvs9ftJDPqHW44U/rOnIE6Xs+V21unl250ogGXkRMP2A+n5sr1hLJUwMAAABl+ZdyVTIW
 `,
 	},
 
-	"/": {
-		isDir: true,
-		local: "",
-	},
-
 	"/resources": {
+		name:  "resources",
+		local: `./resources`,
 		isDir: true,
-		local: "resources",
+	},
+}
+
+var _escDirs = map[string][]os.FileInfo{
+
+	"./resources": {
+		_escData["/resources/SpartaHelmet.png"],
+		_escData["/resources/SpartaHelmet128.png"],
+		_escData["/resources/SpartaHelmet16.png"],
+		_escData["/resources/SpartaHelmet256.png"],
+		_escData["/resources/SpartaHelmet32.png"],
+		_escData["/resources/SpartaHelmet64.png"],
 	},
 }
